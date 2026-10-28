@@ -25,6 +25,8 @@ if (!function_exists('pdf_new')) {
     function pdf_load_font(MiniPdf $p, string $name, string $encoding, string $optlist = ''): int { return $p->load_font($name, $encoding, $optlist); }
     function pdf_setfont(MiniPdf $p, int $font, float $size): void { $p->setfont($font, $size); }
     function pdf_set_value(MiniPdf $p, string $key, float $value): void { $p->set_value($key, $value); }
+    function pdf_get_option(MiniPdf $p, string $keyword, string $optlist = ''): float { return $p->get_option($keyword, $optlist); }
+    function pdf_get_value(MiniPdf $p, string $key, float $modifier = 0): float { return $p->get_value($key, $modifier); }
     function pdf_stringwidth(MiniPdf $p, string $text, int $font, float $size): float { return $p->stringwidth($text, $font, $size); }
 
     function pdf_set_text_pos(MiniPdf $p, float $x, float $y): void { $p->set_text_pos($x, $y); }

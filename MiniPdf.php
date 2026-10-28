@@ -304,6 +304,59 @@ final class MiniPdf
         $this->leading = $value;
     }
 
+    /**
+     * Reads current state.
+     * Keywords: textx, texty, fontsize, font, leading, pagewidth, pageheight, major, minor.
+     * Unknown keywords throw, so a missing one shows up immediately rather than as a wrong number.
+     */
+    public function get_option(string $keyword, string $optlist = ''): float
+    {
+        $k = strtolower($keyword);
+        switch ($k) {
+            case 'textx':
+                return $this->textX;
+            case 'texty':
+                return $this->textY;
+            case 'fontsize':
+                return $this->fontSize;
+            case 'font':
+                return (float)($this->font ?? -1);
+            case 'leading':
+                return $this->currentLeading();
+            case 'pagewidth':
+            case 'pageheight':
+                $p = $this->requirePage();
+                return (float)($k === 'pagewidth' ? $p['w'] : $p['h']);
+            case 'major':
+                return 9.0;
+            case 'minor':
+                return 0.0;
+        }
+        throw new MiniPdfException("get_option: unsupported keyword '$keyword'");
+    }
+
+    /**
+     * Older PDFlib API. Same keywords as get_option, plus image keywords that take
+     * an image handle as $modifier: imagewidth, imageheight (pixels), resx, resy (dpi).
+     */
+    public function get_value(string $key, float $modifier = 0): float
+    {
+        $k = strtolower($key);
+        if (in_array($k, ['imagewidth', 'imageheight', 'resx', 'resy'], true)) {
+            $img = $this->images[(int)$modifier] ?? null;
+            if ($img === null) {
+                throw new MiniPdfException("get_value('$key'): invalid image handle " . (int)$modifier);
+            }
+            return (float)match ($k) {
+                'imagewidth' => $img['w'],
+                'imageheight' => $img['h'],
+                'resx' => $img['dpiX'],
+                'resy' => $img['dpiY'],
+            };
+        }
+        return $this->get_option($key);
+    }
+
     public function stringwidth(string $text, int $font, float $fontsize): float
     {
         if (!isset($this->fonts[$font])) {
