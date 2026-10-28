@@ -404,6 +404,63 @@ final class MiniPdf
     }
 
     // ------------------------------------------------------------------
+    // Lines and shapes
+    // ------------------------------------------------------------------
+    // Build a path (rect, moveto/lineto, closepath), then paint it with
+    // stroke, fill or fill_stroke. Line width lasts until changed or the page ends.
+
+    public function setlinewidth(float $width): void
+    {
+        $this->requirePage();
+        $this->page['ops'][] = $this->num($width) . ' w';
+    }
+
+    /** Adds a rectangle with its lower-left corner at ($x, $y) to the path. */
+    public function rect(float $x, float $y, float $width, float $height): void
+    {
+        $this->requirePage();
+        $this->page['ops'][] = $this->num($x) . ' ' . $this->num($y) . ' '
+            . $this->num($width) . ' ' . $this->num($height) . ' re';
+    }
+
+    public function moveto(float $x, float $y): void
+    {
+        $this->requirePage();
+        $this->page['ops'][] = $this->num($x) . ' ' . $this->num($y) . ' m';
+    }
+
+    public function lineto(float $x, float $y): void
+    {
+        $this->requirePage();
+        $this->page['ops'][] = $this->num($x) . ' ' . $this->num($y) . ' l';
+    }
+
+    public function closepath(): void
+    {
+        $this->requirePage();
+        $this->page['ops'][] = 'h';
+    }
+
+    /** Draws the outline of the current path, then clears it. */
+    public function stroke(): void
+    {
+        $this->requirePage();
+        $this->page['ops'][] = 'S';
+    }
+
+    public function fill(): void
+    {
+        $this->requirePage();
+        $this->page['ops'][] = 'f';
+    }
+
+    public function fill_stroke(): void
+    {
+        $this->requirePage();
+        $this->page['ops'][] = 'B';
+    }
+
+    // ------------------------------------------------------------------
     // Images
     // ------------------------------------------------------------------
 

@@ -41,6 +41,15 @@ if (!function_exists('pdf_new')) {
     function pdf_place_image(MiniPdf $p, int $image, float $x, float $y, float $scale): void { $p->place_image($image, $x, $y, $scale); }
     function pdf_close_image(MiniPdf $p, int $image): void { $p->close_image($image); }
 
+    function pdf_setlinewidth(MiniPdf $p, float $width): void { $p->setlinewidth($width); }
+    function pdf_rect(MiniPdf $p, float $x, float $y, float $w, float $h): void { $p->rect($x, $y, $w, $h); }
+    function pdf_moveto(MiniPdf $p, float $x, float $y): void { $p->moveto($x, $y); }
+    function pdf_lineto(MiniPdf $p, float $x, float $y): void { $p->lineto($x, $y); }
+    function pdf_closepath(MiniPdf $p): void { $p->closepath(); }
+    function pdf_stroke(MiniPdf $p): void { $p->stroke(); }
+    function pdf_fill(MiniPdf $p): void { $p->fill(); }
+    function pdf_fill_stroke(MiniPdf $p): void { $p->fill_stroke(); }
+
     // Older PDFlib names
     function pdf_open_file(MiniPdf $p, string $filename = ''): int { return $p->begin_document($filename); }
     function pdf_close(MiniPdf $p): void { $p->end_document(); }
