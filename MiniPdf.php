@@ -838,7 +838,9 @@ class MiniPdf
     }
 
     /**
-     * Converts a GIF to an RGBA PNG in memory using GD, keeping transparency.
+     * Converts a GIF to a palette PNG in memory using GD. Keeping the palette (instead of
+     * expanding to RGBA) means the PNG data is copied into the PDF without PHP touching
+     * any pixels; the GIF's transparent colour becomes a colour-key mask.
      * Animated GIFs give their first frame. GIFs carry no resolution, so they
      * size at 72 dpi (one pixel per point) unless fit_image says otherwise.
      */
@@ -851,11 +853,8 @@ class MiniPdf
         if ($im === false) {
             throw new MiniPdfException("cannot decode GIF: $file");
         }
-        imagepalettetotruecolor($im);
-        imagealphablending($im, false);
-        imagesavealpha($im, true);
         ob_start();
-        $ok = imagepng($im, null, 1, PNG_FILTER_NONE); // unfiltered rows decode fast
+        $ok = imagepng($im);
         $png = (string)ob_get_clean();
         if (!$ok || $png === '') {
             throw new MiniPdfException("cannot convert GIF to PNG: $file");
@@ -873,6 +872,7 @@ class MiniPdf
         $n = strlen($d);
         $hdr = null;
         $pal = '';
+        $trns = '';
         $idat = '';
         $dpiX = $dpiY = 72.0;
         while ($pos + 8 <= $n) {
@@ -882,6 +882,8 @@ class MiniPdf
             $pos += 12 + $len;
             if ($type === 'IHDR') {
                 $hdr = unpack('Nw/Nh/Cbits/Ccolor/Ccomp/Cfilter/Cinterlace', $body);
+            } elseif ($type === 'tRNS') {
+                $trns = $body;
             } elseif ($type === 'PLTE') {
                 $pal = $body;
             } elseif ($type === 'IDAT') {
@@ -918,7 +920,8 @@ class MiniPdf
             }
             $this->imageRoute = 'png-no-alpha';
             $dict = "/Type /XObject /Subtype /Image /Width $w /Height $h /ColorSpace $cs /BitsPerComponent $bits"
-                . " /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors $colors /BitsPerComponent $bits /Columns $w >>";
+                . " /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors $colors /BitsPerComponent $bits /Columns $w >>"
+                . $this->colorKeyMask($ct, $trns);
             return $base + ['id' => $this->addObject($this->streamBody($dict, $idat, false))];
         }
 
@@ -972,6 +975,45 @@ class MiniPdf
         }
         $id = $this->addObject($this->streamBody($dict, $color, true));
         return $base + ['id' => $id];
+    }
+
+    /**
+     * Turns a PNG tRNS chunk into a PDF colour-key /Mask, so simple transparency
+     * (one transparent colour, as in every GIF) needs no pixel decoding.
+     * Palette entries that are only partly transparent are drawn opaque.
+     */
+    private function colorKeyMask(int $ct, string $trns): string
+    {
+        if ($trns === '') {
+            return '';
+        }
+        if ($ct === 3) {
+            $clear = [];
+            $n = strlen($trns);
+            for ($i = 0; $i < $n; $i++) {
+                if (ord($trns[$i]) === 0) {
+                    $clear[] = $i;
+                }
+            }
+            if (!$clear) {
+                return '';
+            }
+            [$lo, $hi] = [min($clear), max($clear)];
+            // One /Mask range only: use it when the transparent entries are contiguous, else the first one.
+            if ($hi - $lo + 1 !== count($clear)) {
+                $hi = $lo;
+            }
+            return " /Mask [$lo $hi]";
+        }
+        if ($ct === 0 && strlen($trns) >= 2) {
+            $g = unpack('n', $trns)[1];
+            return " /Mask [$g $g]";
+        }
+        if ($ct === 2 && strlen($trns) >= 6) {
+            $c = unpack('nr/ng/nb', $trns);
+            return " /Mask [{$c['r']} {$c['r']} {$c['g']} {$c['g']} {$c['b']} {$c['b']}]";
+        }
+        return '';
     }
 
     private function pngUnfilter(string $raw, int $w, int $h, int $bpp): string
