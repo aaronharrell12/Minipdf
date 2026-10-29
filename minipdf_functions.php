@@ -9,7 +9,14 @@ declare(strict_types=1);
 require_once __DIR__ . '/MiniPdf.php';
 
 if (!function_exists('pdf_new')) {
-    function pdf_new(): MiniPdf { return new MiniPdf(); }
+    function pdf_new(): MiniPdf
+    {
+        if (defined('MINIPDF_TIMED') && MINIPDF_TIMED) {
+            require_once __DIR__ . '/TimedMiniPdf.php';
+            return new TimedMiniPdf();
+        }
+        return new MiniPdf();
+    }
     function pdf_delete(MiniPdf $p): void {}
 
     function pdf_begin_document(MiniPdf $p, string $filename, string $optlist = ''): int { return $p->begin_document($filename, $optlist); }
@@ -25,6 +32,8 @@ if (!function_exists('pdf_new')) {
     function pdf_load_font(MiniPdf $p, string $name, string $encoding, string $optlist = ''): int { return $p->load_font($name, $encoding, $optlist); }
     function pdf_setfont(MiniPdf $p, int $font, float $size): void { $p->setfont($font, $size); }
     function pdf_set_value(MiniPdf $p, string $key, float $value): void { $p->set_value($key, $value); }
+    function pdf_get_option(MiniPdf $p, string $keyword, string $optlist = ''): float { return $p->get_option($keyword, $optlist); }
+    function pdf_get_value(MiniPdf $p, string $key, float $modifier = 0): float { return $p->get_value($key, $modifier); }
     function pdf_stringwidth(MiniPdf $p, string $text, int $font, float $size): float { return $p->stringwidth($text, $font, $size); }
 
     function pdf_set_text_pos(MiniPdf $p, float $x, float $y): void { $p->set_text_pos($x, $y); }
@@ -40,6 +49,15 @@ if (!function_exists('pdf_new')) {
     function pdf_fit_image(MiniPdf $p, int $image, float $x, float $y, string $optlist = ''): void { $p->fit_image($image, $x, $y, $optlist); }
     function pdf_place_image(MiniPdf $p, int $image, float $x, float $y, float $scale): void { $p->place_image($image, $x, $y, $scale); }
     function pdf_close_image(MiniPdf $p, int $image): void { $p->close_image($image); }
+
+    function pdf_setlinewidth(MiniPdf $p, float $width): void { $p->setlinewidth($width); }
+    function pdf_rect(MiniPdf $p, float $x, float $y, float $w, float $h): void { $p->rect($x, $y, $w, $h); }
+    function pdf_moveto(MiniPdf $p, float $x, float $y): void { $p->moveto($x, $y); }
+    function pdf_lineto(MiniPdf $p, float $x, float $y): void { $p->lineto($x, $y); }
+    function pdf_closepath(MiniPdf $p): void { $p->closepath(); }
+    function pdf_stroke(MiniPdf $p): void { $p->stroke(); }
+    function pdf_fill(MiniPdf $p): void { $p->fill(); }
+    function pdf_fill_stroke(MiniPdf $p): void { $p->fill_stroke(); }
 
     // Older PDFlib names
     function pdf_open_file(MiniPdf $p, string $filename = ''): int { return $p->begin_document($filename); }
