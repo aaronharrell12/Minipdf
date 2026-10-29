@@ -22,6 +22,7 @@ class TimedMiniPdf extends MiniPdf
     private float $t0;
     private int $depth = 0;
     private array $stats = [];   // method => [calls, totalSeconds, maxSeconds]
+    private array $routes = [];  // load_image route => [calls, totalSeconds, maxSeconds, maxPixels, maxBytes]
 
     public function __construct()
     {
@@ -39,6 +40,14 @@ class TimedMiniPdf extends MiniPdf
         $lines = [sprintf('%-16s %8s %11s %11s', 'method', 'calls', 'total ms', 'max ms')];
         foreach ($this->stats as $name => [$calls, $total, $max]) {
             $lines[] = sprintf('%-16s %8d %11.1f %11.2f', $name, $calls, $total * 1000, $max * 1000);
+        }
+        if ($this->routes) {
+            $lines[] = '';
+            $lines[] = sprintf('%-20s %6s %10s %9s %11s %9s', 'load_image route', 'calls', 'total ms', 'max ms', 'max pixels', 'max KB');
+            foreach ($this->routes as $route => [$calls, $total, $max, $px, $bytes]) {
+                $lines[] = sprintf('%-20s %6d %10.1f %9.2f %11d %9d', $route, $calls, $total * 1000, $max * 1000, $px, intdiv($bytes, 1024));
+            }
+            $lines[] = '';
         }
         $lines[] = sprintf('inside MiniPdf:  %.1f ms', $inside * 1000);
         $lines[] = sprintf('outside MiniPdf: %.1f ms  (since new TimedMiniPdf)', ($wall - $inside) * 1000);
@@ -336,10 +345,20 @@ class TimedMiniPdf extends MiniPdf
     {
         $t = $this->enter();
         try {
-            return parent::load_image($imagetype, $filename, $optlist);
+            $handle = parent::load_image($imagetype, $filename, $optlist);
         } finally {
             $this->leave('load_image', $t);
         }
+        $dt = microtime(true) - $t;
+        $info = $this->last_image_info();
+        $route = $info['route'] ?? '?';
+        $r = $this->routes[$route] ?? [0, 0.0, 0.0, 0, 0];
+        $this->routes[$route] = [
+            $r[0] + 1, $r[1] + $dt, max($r[2], $dt),
+            max($r[3], ($info['w'] ?? 0) * ($info['h'] ?? 0)), max($r[4], $info['bytes'] ?? 0),
+        ];
+        return $handle;
+    }
     }
 
     public function fit_image(int $image, float $x, float $y, string $optlist = ''): void

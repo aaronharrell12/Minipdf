@@ -92,6 +92,8 @@ class MiniPdf
     private array $fonts = [];        // handle => [name, objId, resName, widths]
     private array $images = [];       // handle => [objId, resName, wPx, hPx, dpiX, dpiY]
     private array $imageCache = [];   // file identity => handle, so repeated loads embed once
+    private string $imageRoute = '';  // which decoding path the last image took
+    private array $lastImageInfo = [];
     private ?array $page = null;      // open page state
     private ?int $font = null;
     private float $fontSize = 0.0;
@@ -527,6 +529,7 @@ class MiniPdf
         clearstatcache(true, $filename);
         $cacheKey = (realpath($filename) ?: $filename) . '|' . @filesize($filename) . '|' . @filemtime($filename);
         if (isset($this->imageCache[$cacheKey])) {
+            $this->lastImageInfo = ['route' => 'cache-hit', 'w' => 0, 'h' => 0, 'bytes' => 0];
             return $this->imageCache[$cacheKey];
         }
         $data = @file_get_contents($filename);
@@ -555,6 +558,10 @@ class MiniPdf
         $img['res'] = 'Im' . $handle;
         $this->images[$handle] = $img;
         $this->imageCache[$cacheKey] = $handle;
+        $this->lastImageInfo = [
+            'route' => $type === 'gif' ? 'gif-via-gd' : $this->imageRoute,
+            'w' => $img['w'], 'h' => $img['h'], 'bytes' => strlen($data),
+        ];
         return $handle;
     }
 
@@ -620,6 +627,12 @@ class MiniPdf
     public function place_image(int $image, float $x, float $y, float $scale): void
     {
         $this->fit_image($image, $x, $y, 'scale=' . $this->num($scale));
+    }
+
+    /** Diagnostics: route, pixel size and file size of the most recent load_image call. */
+    public function last_image_info(): array
+    {
+        return $this->lastImageInfo;
     }
 
     /** Images stay usable until end_document; kept for API compatibility. */
@@ -810,6 +823,7 @@ class MiniPdf
                     4 => '/DeviceCMYK',
                     default => throw new MiniPdfException("unsupported JPEG channel count in $file"),
                 };
+                $this->imageRoute = 'jpeg';
                 $dict = "/Type /XObject /Subtype /Image /Width {$sof['w']} /Height {$sof['h']} /ColorSpace $cs"
                     . " /BitsPerComponent {$sof['bits']} /Filter /DCTDecode"
                     . ($sof['c'] === 4 ? ' /Decode [1 0 1 0 1 0 1 0]' : '');
@@ -902,6 +916,7 @@ class MiniPdf
                 $cs = $ct === 0 ? '/DeviceGray' : '/DeviceRGB';
                 $colors = $ct === 0 ? 1 : 3;
             }
+            $this->imageRoute = 'png-no-alpha';
             $dict = "/Type /XObject /Subtype /Image /Width $w /Height $h /ColorSpace $cs /BitsPerComponent $bits"
                 . " /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors $colors /BitsPerComponent $bits /Columns $w >>";
             return $base + ['id' => $this->addObject($this->streamBody($dict, $idat, false))];
@@ -920,6 +935,7 @@ class MiniPdf
                 $png = (string)ob_get_clean();
                 if ($ok && $png !== '') {
                     $img = $this->parsePng($png, $file, true);
+                    $this->imageRoute = 'png-alpha-via-gd';
                     return ['dpiX' => $dpiX, 'dpiY' => $dpiY] + $img; // GD drops the resolution
                 }
             }
@@ -927,6 +943,7 @@ class MiniPdf
         if ($bits !== 8) {
             throw new MiniPdfException("only 8-bit PNGs with transparency are supported without GD: $file");
         }
+        $this->imageRoute = $gdOutput ? 'png-alpha-via-gd' : 'png-alpha-pure-php';
         $raw = gzuncompress($idat);
         if ($raw === false) {
             throw new MiniPdfException("cannot decompress PNG data: $file");
