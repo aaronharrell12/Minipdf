@@ -14,7 +14,7 @@ declare(strict_types=1);
  *   load_font / setfont / stringwidth / set_value('leading', ...)
  *   set_text_pos / show / show_xy / continue_text
  *   show_boxed   (left, right, center, justify, fulljustify; "blind")
- *   load_image / fit_image / place_image / close_image   (JPEG, PNG; GIF via GD)
+ *   load_image / fit_image / place_image / close_image   (JPEG, PNG)
  *
  * Fonts: the 12 Latin PDF standard fonts (Helvetica, Times, Courier families),
  * WinAnsi (Windows-1252) encoding. Nothing is embedded. Characters outside
@@ -91,7 +91,6 @@ final class MiniPdf
     private array $info = [];
     private array $fonts = [];        // handle => [name, objId, resName, widths]
     private array $images = [];       // handle => [objId, resName, wPx, hPx, dpiX, dpiY]
-    private array $imageCache = [];   // file identity => handle, so repeated loads embed once
     private ?array $page = null;      // open page state
     private ?int $font = null;
     private float $fontSize = 0.0;
@@ -116,7 +115,6 @@ final class MiniPdf
         $this->info = [];
         $this->fonts = [];
         $this->images = [];
-        $this->imageCache = [];
         $this->page = null;
         $this->font = null;
         $this->leading = null;
@@ -304,59 +302,6 @@ final class MiniPdf
         $this->leading = $value;
     }
 
-    /**
-     * Reads current state.
-     * Keywords: textx, texty, fontsize, font, leading, pagewidth, pageheight, major, minor.
-     * Unknown keywords throw, so a missing one shows up immediately rather than as a wrong number.
-     */
-    public function get_option(string $keyword, string $optlist = ''): float
-    {
-        $k = strtolower($keyword);
-        switch ($k) {
-            case 'textx':
-                return $this->textX;
-            case 'texty':
-                return $this->textY;
-            case 'fontsize':
-                return $this->fontSize;
-            case 'font':
-                return (float)($this->font ?? -1);
-            case 'leading':
-                return $this->currentLeading();
-            case 'pagewidth':
-            case 'pageheight':
-                $p = $this->requirePage();
-                return (float)($k === 'pagewidth' ? $p['w'] : $p['h']);
-            case 'major':
-                return 9.0;
-            case 'minor':
-                return 0.0;
-        }
-        throw new MiniPdfException("get_option: unsupported keyword '$keyword'");
-    }
-
-    /**
-     * Older PDFlib API. Same keywords as get_option, plus image keywords that take
-     * an image handle as $modifier: imagewidth, imageheight (pixels), resx, resy (dpi).
-     */
-    public function get_value(string $key, float $modifier = 0): float
-    {
-        $k = strtolower($key);
-        if (in_array($k, ['imagewidth', 'imageheight', 'resx', 'resy'], true)) {
-            $img = $this->images[(int)$modifier] ?? null;
-            if ($img === null) {
-                throw new MiniPdfException("get_value('$key'): invalid image handle " . (int)$modifier);
-            }
-            return (float)match ($k) {
-                'imagewidth' => $img['w'],
-                'imageheight' => $img['h'],
-                'resx' => $img['dpiX'],
-                'resy' => $img['dpiY'],
-            };
-        }
-        return $this->get_option($key);
-    }
-
     public function stringwidth(string $text, int $font, float $fontsize): float
     {
         if (!isset($this->fonts[$font])) {
@@ -459,76 +404,13 @@ final class MiniPdf
     }
 
     // ------------------------------------------------------------------
-    // Lines and shapes
-    // ------------------------------------------------------------------
-    // Build a path (rect, moveto/lineto, closepath), then paint it with
-    // stroke, fill or fill_stroke. Line width lasts until changed or the page ends.
-
-    public function setlinewidth(float $width): void
-    {
-        $this->requirePage();
-        $this->page['ops'][] = $this->num($width) . ' w';
-    }
-
-    /** Adds a rectangle with its lower-left corner at ($x, $y) to the path. */
-    public function rect(float $x, float $y, float $width, float $height): void
-    {
-        $this->requirePage();
-        $this->page['ops'][] = $this->num($x) . ' ' . $this->num($y) . ' '
-            . $this->num($width) . ' ' . $this->num($height) . ' re';
-    }
-
-    public function moveto(float $x, float $y): void
-    {
-        $this->requirePage();
-        $this->page['ops'][] = $this->num($x) . ' ' . $this->num($y) . ' m';
-    }
-
-    public function lineto(float $x, float $y): void
-    {
-        $this->requirePage();
-        $this->page['ops'][] = $this->num($x) . ' ' . $this->num($y) . ' l';
-    }
-
-    public function closepath(): void
-    {
-        $this->requirePage();
-        $this->page['ops'][] = 'h';
-    }
-
-    /** Draws the outline of the current path, then clears it. */
-    public function stroke(): void
-    {
-        $this->requirePage();
-        $this->page['ops'][] = 'S';
-    }
-
-    public function fill(): void
-    {
-        $this->requirePage();
-        $this->page['ops'][] = 'f';
-    }
-
-    public function fill_stroke(): void
-    {
-        $this->requirePage();
-        $this->page['ops'][] = 'B';
-    }
-
-    // ------------------------------------------------------------------
     // Images
     // ------------------------------------------------------------------
 
-    /** $imagetype: auto | jpeg | png | gif. Returns an image handle. */
+    /** $imagetype: auto | jpeg | png. Returns an image handle. */
     public function load_image(string $imagetype, string $filename, string $optlist = ''): int
     {
         $this->requireDoc();
-        // Reports often call load_image for the same logo on every page; decode and embed it once.
-        clearstatcache(true, $filename);
-        $cacheKey = (realpath($filename) ?: $filename) . '|' . @filesize($filename) . '|' . @filemtime($filename);
-        if (isset($this->imageCache[$cacheKey])) {
-            return $this->imageCache[$cacheKey];
-        }
         $data = @file_get_contents($filename);
         if ($data === false) {
             throw new MiniPdfException("cannot read image $filename");
@@ -539,8 +421,6 @@ final class MiniPdf
                 $type = 'jpeg';
             } elseif (str_starts_with($data, "\x89PNG\r\n\x1A\n")) {
                 $type = 'png';
-            } elseif (str_starts_with($data, 'GIF87a') || str_starts_with($data, 'GIF89a')) {
-                $type = 'gif';
             } else {
                 throw new MiniPdfException("unrecognized image format: $filename");
             }
@@ -548,13 +428,11 @@ final class MiniPdf
         $img = match ($type) {
             'jpeg', 'jpg' => $this->parseJpeg($data, $filename),
             'png' => $this->parsePng($data, $filename),
-            'gif' => $this->parsePng($this->gifToPng($data, $filename), $filename, true),
             default => throw new MiniPdfException("unsupported image type '$imagetype'"),
         };
         $handle = count($this->images) + 1;
         $img['res'] = 'Im' . $handle;
         $this->images[$handle] = $img;
-        $this->imageCache[$cacheKey] = $handle;
         return $handle;
     }
 
@@ -734,9 +612,6 @@ final class MiniPdf
     /** Text to WinAnsi bytes, one byte per character; unmappable characters become '?'. */
     private function toWinAnsi(string $text): string
     {
-        if (!preg_match('/[^\x20-\x7E\n]/', $text)) {
-            return $text; // plain ASCII is already WinAnsi
-        }
         if ($this->cp1252Reverse === null) {
             $this->cp1252Reverse = [];
             foreach (self::CP1252_HIGH as $i => $cp) {
@@ -823,34 +698,7 @@ final class MiniPdf
         throw new MiniPdfException("no image size found in JPEG: $file");
     }
 
-    /**
-     * Converts a GIF to an RGBA PNG in memory using GD, keeping transparency.
-     * Animated GIFs give their first frame. GIFs carry no resolution, so they
-     * size at 72 dpi (one pixel per point) unless fit_image says otherwise.
-     */
-    private function gifToPng(string $data, string $file): string
-    {
-        if (!function_exists('imagecreatefromstring') || !(imagetypes() & IMG_GIF)) {
-            throw new MiniPdfException("GIF support needs the PHP GD extension with GIF enabled: $file");
-        }
-        $im = @imagecreatefromstring($data);
-        if ($im === false) {
-            throw new MiniPdfException("cannot decode GIF: $file");
-        }
-        imagepalettetotruecolor($im);
-        imagealphablending($im, false);
-        imagesavealpha($im, true);
-        ob_start();
-        $ok = imagepng($im, null, 1, PNG_FILTER_NONE); // unfiltered rows decode fast
-        $png = (string)ob_get_clean();
-        if (!$ok || $png === '') {
-            throw new MiniPdfException("cannot convert GIF to PNG: $file");
-        }
-        return $png;
-    }
-
-    /** $gdOutput: the data was written by GD with row filters off (no re-encode needed). */
-    private function parsePng(string $d, string $file, bool $gdOutput = false): array
+    private function parsePng(string $d, string $file): array
     {
         if (!function_exists('gzcompress')) {
             throw new MiniPdfException('PNG support needs the PHP zlib extension');
@@ -907,25 +755,9 @@ final class MiniPdf
             return $base + ['id' => $this->addObject($this->streamBody($dict, $idat, false))];
         }
 
-        // Alpha channel: colour and alpha must be separated into an image plus a soft mask.
-        // Undoing PNG row filters byte by byte in PHP is slow, so when GD is available let it
-        // decode the file (in C) and re-write it with filters off; then the split is cheap.
-        if (!$gdOutput && function_exists('imagecreatefromstring') && (imagetypes() & IMG_PNG)) {
-            $im = @imagecreatefromstring($d);
-            if ($im !== false) {
-                imagealphablending($im, false);
-                imagesavealpha($im, true);
-                ob_start();
-                $ok = imagepng($im, null, 1, PNG_FILTER_NONE);
-                $png = (string)ob_get_clean();
-                if ($ok && $png !== '') {
-                    $img = $this->parsePng($png, $file, true);
-                    return ['dpiX' => $dpiX, 'dpiY' => $dpiY] + $img; // GD drops the resolution
-                }
-            }
-        }
+        // Alpha channel: decode, split colour and alpha into an image plus a soft mask.
         if ($bits !== 8) {
-            throw new MiniPdfException("only 8-bit PNGs with transparency are supported without GD: $file");
+            throw new MiniPdfException("only 8-bit PNGs with transparency are supported: $file");
         }
         $raw = gzuncompress($idat);
         if ($raw === false) {
@@ -933,27 +765,23 @@ final class MiniPdf
         }
         $bpp = $ct === 6 ? 4 : 2;
         $pixels = $this->pngUnfilter($raw, $w, $h, $bpp);
-        unset($raw);
-        // Split interleaved pixels with regex replacements, which run in C rather than a PHP loop.
-        if ($ct === 6) {
-            $color = preg_replace('/(...)./s', '$1', $pixels);
-            $alpha = preg_replace('/...(.)/s', '$1', $pixels);
-        } else {
-            $color = preg_replace('/(.)./s', '$1', $pixels);
-            $alpha = preg_replace('/.(.)/s', '$1', $pixels);
+        $colorBytes = $bpp - 1;
+        $color = '';
+        $alpha = '';
+        $total = $w * $h;
+        for ($i = 0, $o = 0; $i < $total; $i++, $o += $bpp) {
+            $color .= substr($pixels, $o, $colorBytes);
+            $alpha .= $pixels[$o + $colorBytes];
         }
-        unset($pixels);
+        $maskId = $this->addObject($this->streamBody(
+            "/Type /XObject /Subtype /Image /Width $w /Height $h /ColorSpace /DeviceGray /BitsPerComponent 8",
+            $alpha, true
+        ));
         $cs = $ct === 6 ? '/DeviceRGB' : '/DeviceGray';
-        $dict = "/Type /XObject /Subtype /Image /Width $w /Height $h /ColorSpace $cs /BitsPerComponent 8";
-        // Fully opaque (common for GIFs and many PNGs): no mask needed.
-        if (strspn($alpha, "\xFF") !== strlen($alpha)) {
-            $maskId = $this->addObject($this->streamBody(
-                "/Type /XObject /Subtype /Image /Width $w /Height $h /ColorSpace /DeviceGray /BitsPerComponent 8",
-                $alpha, true
-            ));
-            $dict .= " /SMask $maskId 0 R";
-        }
-        $id = $this->addObject($this->streamBody($dict, $color, true));
+        $id = $this->addObject($this->streamBody(
+            "/Type /XObject /Subtype /Image /Width $w /Height $h /ColorSpace $cs /BitsPerComponent 8 /SMask $maskId 0 R",
+            $color, true
+        ));
         return $base + ['id' => $id];
     }
 
